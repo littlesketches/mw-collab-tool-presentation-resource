@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description" content="Melbourne Water stakeholder map">
+        <meta name="author" content="Little Sketches ">
+        <script src="https://d3js.org/d3.v5.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.1/papaparse.min.js" integrity="sha512-EbdJQSugx0nVWrtyK3JdQQ/03mS3Q1UiAhRtErbwl1YL/+e2hZdlIcSURxxh7WXHTzn83sjlh2rysACoJGfb6g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+ 
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300&display=swap');
+
+            #vis{
+                max-width: 100%;
+                height: 100%;
+                font-family: 'Roboto', sans-serif;
+            }
+            .link path{
+                fill: none;
+                stroke: #555;
+                stroke-opacity: 0.4;
+                stroke-width: 0.35;
+            }
+            .intermediate-node{
+                fill: #04346B;
+            }
+            .leaf-node{
+                fill: #1794D5;
+            }
+            .labels{
+                fill: #000;
+            }
+
+            .dark .link path{
+                fill: none;
+                stroke: rgb(255, 255, 255);
+                stroke-opacity: 1;
+            }
+            .dark .intermediate-node{
+                fill: #48c8b9;
+            }
+            .dark .leaf-node{
+                fill: #1794D5;
+            }
+            .dark .labels{
+                fill: rgb(255, 255, 255);
+            }
+
+        </style>
+    </head>
+
+    <body class = "">
+        <div class = "svg-container">
+            <svg id = "vis"></svg>
+        </div>
+    </body>
+
+    <script>
+
+        ///////////////////////////////////////////////////////
+        ///// INIT SEQUENCE | LOAD DATA FROM GOOGLE SHEET  ///
+        ///////////////////////////////////////////////////////
+        
+        let chartData
+
+        Papa.parse("https://docs.google.com/spreadsheets/d/e/2PACX-1vQ27RM6mD2DCQRr_SCMgrieIUsv3BbSFtMZUYUDavmeD_uiOKSSKfcndGDFeWcad7JZ6b7vur8lZW4i/pub?gid=0&single=true&output=tsv",  {
+            download: true,
+            header: true,
+            delimiter: '\t',                        
+            complete: async (results) => {
+                const fields = results.meta.fields
+                await shapeData(results.data)
+                await renderVis(chartData, settings)
+            }
+        })
+
+
+        async function shapeData(data) {
+ 
+            const nestedData = d3.nest()
+                .key( d => d.node)
+                .key( d => d.branch_1)
+                .key( d => d.branch_2)
+                .key( d => d.branch_3)
+                .key( d => d.branch_4)
+                .entries(data)[0]
+
+            chartData = {
+                "name": nestedData.key,
+                "children": nestedData.values.map( branch_1 => {
+                    return {
+                        "name": branch_1.key,
+                        "children": branch_1.values[0].key === "" ? null : branch_1.values.map(branch_2 => {
+                            return {
+                                "name": branch_2.key,
+                                "children": branch_2.values[0].key === "" ? null : branch_2.values.map(branch_3 => {
+                                    return {
+                                        "name": branch_3.key,
+                                        "children":   branch_3.values[0].key === "" ? null : branch_3.values.map(branch_4 => {
+                                            return {
+                                                "name": branch_4.key
+                                            }
+                                        })
+                                    }
+                                }) //end of map(function(country){
+                            };
+                        }) //end of map(function(region){
+                    };
+
+                }) //end of map(function(major){
+            }; //end of var declaration
+        }
+
+
+        //////////////////////////////////
+        // 0. SETUP DATA AND SETTINGS  ///
+        //////////////////////////////////
+
+        const settings = {
+            svgID:        'vis',
+            dims: {
+                height:     1080, 
+                width:      1080,
+                margin: {
+                    top: 50, right: 50, bottom: 50, left: 50
+                }
+            },
+            geometry: {
+                type:       'radial',  // 'radial' and 'tidyRadial'
+                rotation:   0
+            },
+            layout: {
+                mode:   'light'
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////
+        // A.  RENDER THE TABLE AND CIRCULAR BAR VIS FOR MATERIALS BREAKDOWN ///
+        ////////////////////////////////////////////////////////////////////////
+
+        async function renderVis(sourceData, settings){
+            const queryParameters = new URLSearchParams(window.location.search)
+            if (queryParameters.has('mode')) { 
+                settings.layout.mode = queryParameters.get('mode')  
+                d3.select('body').classed(settings.layout.mode, true)
+            }
+
+            const svg = d3.select(`#${settings.svgID}`)
+                    .attr('viewBox', `${-settings.dims.width/2} ${-settings.dims.height/2} ${settings.dims.width} ${settings.dims.height}`)
+            
+            const chart = svg.append('g')
+            const data = d3.hierarchy(sourceData)
+              // .sort((a, b) => d3.ascending(a.data.name, b.data.name))
+
+            let tree
+
+            switch(settings.geometry.type){
+                 case 'radial':
+                    tree = d3.cluster().size([2 * Math.PI, settings.dims.height * 0.44 - 100])
+                    break 
+                case 'tidyRadial':
+                    tree = d3.tree()
+                        .size([2 * Math.PI, settings.dims.height * 0.355])
+                        .separation((a, b) => (a.parent == b.parent ? 1 : 2) / a.depth)
+                    break
+
+                default: // Show the radial by default
+                    tree = d3.cluster().size([2 * Math.PI, settings.dims.height * 0.44 - 100])
+            }
+
+            const root = tree(data)
+
+            // Add group of paths/links
+            chart.append("g").classed('link', true)
+                // .attr("fill", "none")
+                // .attr("stroke", "#555")
+                // .attr("stroke-opacity", 0.4)
+                // .attr("stroke-width", 0.35)
+                .attr("transform", d => `rotate(${settings.geometry.rotation})`)
+                .selectAll("path")
+                    .data(root.links())
+                    .join("path")
+                    .attr("d", d3.linkRadial()
+                        .angle(d => d.x)
+                        .radius(d => d.y));
+
+            // Add group of nodes
+            chart.append("g")
+                .selectAll("circle")
+                .data(root.descendants())
+                .join("circle")
+                    .attr("transform", d => ` rotate(${d.x * 180 / Math.PI - 90 + settings.geometry.rotation}) translate(${d.y}, 0)`)
+                    .attr("class", d => d.children ? "intermediate-node node" : "leaf-node node")
+                    // .attr("fill", d => d.children ? "#04346B" : "#1794D5")
+                    .attr("r", 2.25);
+
+            // Add labels
+            chart.append("g").classed('labels', true)
+                .style("font-family", "Roboto")
+                // .attr("stroke-linejoin", "round")
+                // .attr("stroke-width", 3)
+                .selectAll("text")
+                    .data(root.descendants())
+                    .join("text")
+                    .attr("transform", d => `
+                        rotate(${d.x * 180 / Math.PI - 90 + settings.geometry.rotation}) 
+                        translate(${d.y}, 0) 
+                        rotate(${d.x >= Math.PI ? 180 : 0})
+                    `)
+                    .attr("dy", "0.31em")
+                    .attr("x", d => d.x < Math.PI === !d.children ? 6 : -6)
+                    .attr("text-anchor", d => d.x < Math.PI === !d.children ? "start" : "end")
+                .attr("font-size", d => !d.data.children ? 6 : 6)
+                    .text(d => {
+                        console.log()
+                        return !d.data.children  ? d.data.name : `${d.data.name} (${ d.data.children.length})` })
+                    // .clone(true).lower()
+                    // .attr("stroke", "white");
+
+        };
+
+
+
+        ////////////////////////////////////
+        /// X. HELPER FUNCTIONS |        ///
+        ////////////////////////////////////
+
+
+            const helpers= {
+                numberFormatters: {
+                    formatComma:           	d3.format(",.0f"),
+                    formatComma1dec:       	d3.format(",.1f"),
+                    formatComma2dec:       	d3.format(",.2f"),
+                    formatInteger:         	d3.format(".0f"),   
+                    formatCostInteger:     	d3.format("$,.0f"),  
+                    formatCost1dec:        	d3.format("$,.1f"),  
+                    formatPct:          	d3.format(".0%"), 
+                    formatPct1dec:          d3.format(".1%")  
+                },
+                numberParsers: {
+                    parseDateSlash: d3.timeParse("%d/%m/%Y")
+                },
+                slugify: function (str) {
+                    str = str.replace(/^\s+|\s+$/g, '').toLowerCase(); // trim           
+                    const from = "àáäâèéëêìíïîòóöôùúüûñç·/_,:;",      // remove accents, swap ñ for n, etc
+                        to   = "aaaaeeeeiiiioooouuuunc------"
+                    for (var i=0, l=from.length ; i<l ; i++) {
+                        str = str.replace(new RegExp(from.charAt(i), 'g'), to.charAt(i));
+                    }
+                    str = str.replace(/[^a-z0-9 -]/g, '') // remove invalid chars
+                        .replace(/\s+/g, '-') // collapse whitespace and replace by -
+                        .replace(/-+/g, '-'); // collapse dashes
+                    return str;
+                }, 
+                wrap: function(text, width, lineHeight, centerVertical = false) {
+                    text.each(function() {
+                        let text = d3.select(this),
+                            words = text.text().split(/\s+/).reverse(),
+                            word,
+                            line = [],
+                            lineNumber = 0,
+                            y = text.attr("y"),
+                            x = text.attr("x"),
+                            fontSize = parseFloat(text.style("font-size")),
+                            dy = parseFloat(text.attr("dy")),
+                            tspan = text.text(null).append("tspan").attr("x", x).attr("y", y).attr("dy", dy + "em");
+
+                        while (word = words.pop()) {
+                            line.push(word);
+                            tspan.text(line.join(" "));
+
+                            if (tspan.node().getComputedTextLength() > width) {
+                                line.pop();
+                                tspan.text(line.join(" "));
+                                line = [word];
+                                tspan = text.append("tspan")
+                                    .attr("x", x)
+                                    .attr("y",  y)
+                                    .attr("dy", ++lineNumber * lineHeight + dy + "em").text(word);
+                            }                    
+                        }            
+                        if(centerVertical){
+                            text.style("transform",  "translateY(-"+(10 * (lineNumber))+"px)")
+                        }
+                    })
+                }
+            }
+
+const landcare = [
+    "Arthurs Creek District Landcare Group",
+    "Bacchus Marsh Platypus Alliance Inc. ",
+    "Balcombe and Moorooduc Landcare Group",
+    "Bayside Intrepid Landcare Group",
+    "Bessie-Ararat Creek Landcare Group",
+    "Bunyip Landcare Group",
+    "Cardinia Catchment Landcare Group",
+    "Cardinia Hills Ragwort and Landcare Group",
+    "Clarkefield and District Farm Landcare Group",
+    "Darebin Creek Management Committee",
+    "Dixons Creek Landcare Group",
+    "Dunns Creek Landcare Group",
+    "Eynesbury Environment Group",
+    "French Island Landcare Group",
+    "Friends of Baden Powell Bushland Reserve",
+    "Friends of Belvedere Bushland Reserve",
+    "Friends of Bradshaw Bushland Reserve Inc",
+    "Friends of Brisbane Ranges",
+    "Friends of Bungalook Conservation Reserves",
+    "Friends of Candlebark Walk",
+    "Friends of Central Sweetwater",
+    "Friends of Cobbledicks Ford",
+    "Friends of Coolart",
+    "Friends of Dandenong Ranges National Park",
+    "Friends of Diamond Bay",
+    "Friends of Donald Macdonald Reserve",
+    "Friends of Edithvale-Seaford Wetlands",
+    "Friends of Eltham West Drain",
+    "Friends of Frankston Reservoir Inc",
+    "Friends of Glass Creek Parklands",
+    "Friends of Hanging Rock",
+    "Friends of Hopetoun Park & Parwan Gorge ",
+    "Friends of Kororoit Creek",
+    "Friends of Malcolm Creek",
+    "Friends of Mount Eliza Regional Park",
+    "Friends of Newport Lakes",
+    "Friends of Rosebud Beach and Foreshore",
+    "Friends of Sassafras Creek Inc (FOSC)",
+    "Friends of St Kilda Botanical Gardens",
+    "Friends of Sunbury Cemetery",
+    "Friends of the Helmeted Honeyeater",
+    "Friends of The Pines Flora & Fauna Reserve",
+    "Friends of Truganina Park",
+    "Friends of Walmer Street Bushland",
+    "Friends of Werribee Park",
+    "Friends of Wildlife Reserves Group Inc",
+    "Friends of Yarra Valley Parks",
+    "Greening of Riddell",
+    "Growing Friends of Yarra Bend Park",
+    "Jacksons Creek EcoNetwork",
+    "Jumping Creek Catchment Landcare Group",
+    "Kongwak Hills Landcare Group",
+    "Langwarrin Woodlands & Northern Westernport",
+    "Macclesfield Landcare Group",
+    "Manton and Stony Creek Landcare Group",
+    "Maryknoll Tracks and Reserves",
+    "Middle Yarra Landcare Network",
+    "Moorabool Catchment Landcare Group",
+    "Mornington Peninsula Koala Conservation ",
+    "Mount Pleasant Research Landcare Group",
+    "Mt Toolebewong & District Landcare Group",
+    "Nillumbik Landcare Network",
+    "Olinda Creek Landcare Group",
+    "Pentland Hills Landcare Group",
+    "Point Cook Open Spaces",
+    "Rabbit Busters - Exford",
+    "Rowsley Landcare Group",
+    "Shiela Cameron Guides",
+    "Southern Dandenongs Landcare Group",
+    "Southwest Mornington Peninsula Landcare Group",
+    "Steels Creek Landcare Group",
+    "Sunbury Landcare Association",
+    "Threatened Bird Network",
+    "TreeProject",
+    "Truganina Landcare Group",
+    "Upper Yarra Landcare Group",
+    "Warranwood Reserve Committee",
+    "Werribee River Association",
+    "Western Region Environment Centre",
+    "Whittlesea Landcare",
+    "Yarra Ranges Landcare Network"
+]
+
+
+    </script>
+</html>
+
